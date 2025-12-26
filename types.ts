@@ -56,6 +56,7 @@ export interface Lead {
   };
   preferredVisitDate?: string; // YYYY-MM-DD
   visits: Visit[];
+  createdBy?: string;
   quote?: {
     items: { name: string; price: number }[];
     total: number;

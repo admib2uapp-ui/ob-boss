@@ -1,8 +1,8 @@
 import { Lead } from '../types';
-import { db, storage } from './firebase';
-import { 
-  collection, onSnapshot, addDoc, updateDoc, doc, 
-  query, orderBy, Timestamp, setDoc 
+import { db, storage, auth } from './firebase';
+import {
+  collection, onSnapshot, addDoc, updateDoc, doc,
+  query, orderBy, Timestamp, setDoc
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, uploadString } from 'firebase/storage';
 
@@ -59,21 +59,22 @@ class StoreService {
     // Let's check if lead.id starts with 'l-' (our manual ID). 
     // Ideally, we treat the local ID as temporary or just use addDoc which returns a ref with new ID.
     // But to keep it simple with existing code that might rely on the object passed:
-    
+
     const { id, ...leadData } = lead;
-    
+
     // Use Firestore timestamp
     const dataToSave = {
-        ...leadData,
-        createdAt: Timestamp.now()
+      ...leadData,
+      createdAt: Timestamp.now(),
+      createdBy: auth.currentUser?.uid || 'anonymous'
     };
 
     if (id && id.startsWith('l-')) {
-         // Create a new doc, ignoring the client-side ID to avoid collisions, 
-         // OR use the client ID as the doc ID. Using client ID 'l-...' is fine.
-         await setDoc(doc(db, COLLECTION_NAME, id), dataToSave);
+      // Create a new doc, ignoring the client-side ID to avoid collisions, 
+      // OR use the client ID as the doc ID. Using client ID 'l-...' is fine.
+      await setDoc(doc(db, COLLECTION_NAME, id), dataToSave);
     } else {
-         await addDoc(collection(db, COLLECTION_NAME), dataToSave);
+      await addDoc(collection(db, COLLECTION_NAME), dataToSave);
     }
   }
 
@@ -84,18 +85,19 @@ class StoreService {
 
   async addNote(leadId: string, text: string) {
     const lead = this.getLeadById(leadId);
-    if(lead) {
-      const newNote = { 
-        id: Date.now().toString(), 
-        text, 
-        createdAt: new Date().toISOString(), 
-        author: 'user' 
+    if (lead) {
+      const newNote = {
+        id: Date.now().toString(),
+        text,
+        createdAt: new Date().toISOString(),
+        author: auth.currentUser?.email || 'user',
+        authorId: auth.currentUser?.uid
       };
       const notes = [...(lead.notes || []), newNote];
       await this.updateLead(leadId, { notes });
     }
   }
-  
+
   // --- Storage Helpers ---
 
   async uploadImage(file: File, path: string): Promise<string> {
