@@ -11,14 +11,17 @@ Your job is to manage leads, schedule measurements, and optimize costs.
 
 RULES:
 1. **Orchestration**: Do NOT perform database actions directly. Instead, call the appropriate 'proposal' tool.
-2. **Widgets**: When a user wants to create a lead, invoice, or update status, call the tool. The UI will render a widget for the user to Confirm/Modify.
-3. **Route Logic**: 
+2. **Widgets**: The UI renders widgets for confirmation.
+3. **Lead Management**:
+   - If the user wants to ADD a new person, use 'propose_lead'.
+   - If the user wants to EDIT/CHANGE an existing person, use 'propose_lead_update'. You MUST identify the 'leadId' from the context.
+4. **Route Logic**: 
    - Travel speed in Colombo is approx 20km/h.
    - Each measurement takes 20 minutes.
    - Total daily work limit is 8 hours.
    - If a lead has a 'preferredVisitDate', prioritize that date.
-4. **Tone**: Professional, efficiency-focused, slightly strict but helpful.
-5. **Context**: You know the geography of Colombo (Colombo 1-15, Suburbs).
+5. **Tone**: Professional, efficiency-focused, slightly strict but helpful.
+6. **Context**: You know the geography of Colombo (Colombo 1-15, Suburbs).
 
 When the user provides an image:
 - Analyze it for cabinet requirements.
@@ -39,6 +42,22 @@ const proposeLeadTool: FunctionDeclaration = {
       initialNote: { type: Type.STRING, description: "Any details from chat to save as a note" }
     },
     required: ['customerName', 'addressLabel']
+  }
+};
+
+const proposeLeadUpdateTool: FunctionDeclaration = {
+  name: 'propose_lead_update',
+  description: 'Propose updating an existing lead details (name, phone, address, notes).',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      leadId: { type: Type.STRING },
+      customerName: { type: Type.STRING },
+      whatsappNumber: { type: Type.STRING },
+      addressLabel: { type: Type.STRING },
+      noteToAdd: { type: Type.STRING }
+    },
+    required: ['leadId']
   }
 };
 
@@ -79,8 +98,7 @@ export const analyzeRoutes = async (leads: Lead[]) => {
     name: l.customerName,
     id: l.id,
     address: l.addressLabel,
-    lat: l.location.lat,
-    lng: l.location.lng,
+    lat: l.location.lat,    lng: l.location.lng,
     preferredDate: l.preferredVisitDate || 'Any'
   }));
 
@@ -144,7 +162,7 @@ export const chatWithBoss = async (
       model: 'gemini-3-pro-preview',
       config: {
         systemInstruction: `${BOSS_SYSTEM_INSTRUCTION}\n\nCURRENT DB STATE:\n${leadContext}`,
-        tools: [{ functionDeclarations: [proposeLeadTool, proposeInvoiceTool, proposeStatusUpdateTool] }],
+        tools: [{ functionDeclarations: [proposeLeadTool, proposeLeadUpdateTool, proposeInvoiceTool, proposeStatusUpdateTool] }],
       },
       history: history.map(h => ({
         role: h.role,
@@ -157,7 +175,7 @@ export const chatWithBoss = async (
       parts.push({ inlineData: { mimeType: 'image/jpeg', data: imagePart } });
     }
 
-    const result = await chat.sendMessage({ message: { parts } });
+    const result = await chat.sendMessage({ message: parts });
     return result; 
 
   } catch (error) {
@@ -193,16 +211,46 @@ export const identifyImage = async (base64Data: string) => {
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
-          { text: "Analyze this image for a kitchen cabinet or interior design project. Identify key elements, colors, materials, and any potential measurements or constraints visible." }
-        ]
-      }
+      contents: [
+        {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+            { text: "Analyze this image for a kitchen cabinet or interior design project. Identify key elements, colors, materials, and any potential measurements or constraints visible." }
+          ]
+        }
+      ]
     });
     return response.text || "No analysis available.";
   } catch (error) {
     console.error("Image analysis failed", error);
     return "Analysis failed.";
+  }
+}
+
+// Generate a realistic render from a sketch
+export const generateDesignRender = async (sketchBase64: string, prompt: string) => {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: sketchBase64 } },
+          { text: `Turn this sketch into a realistic photo-quality interior design render. Style: ${prompt}. Maintain the layout of the sketch strictly.` }
+        ]
+      }
+    });
+
+    let imageUrl = '';
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+        break;
+      }
+    }
+    
+    return imageUrl;
+  } catch (error) {
+    console.error("Render generation failed", error);
+    return null;
   }
 }

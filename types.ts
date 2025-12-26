@@ -30,6 +30,14 @@ export interface Visit {
   sitePhotos?: string[]; // URLs
 }
 
+export interface GeneratedDesign {
+  id: string;
+  sketchUrl: string; // The base sketch
+  renderedUrl: string; // The AI result
+  prompt: string;
+  createdAt: string;
+}
+
 export interface Lead {
   id: string;
   customerName: string;
@@ -39,6 +47,7 @@ export interface Lead {
   status: LeadStatus;
   createdAt: string;
   initialImages?: string[]; // URLs
+  generatedDesigns?: GeneratedDesign[];
   notes: Note[];
   visitChargeInvoice?: {
     amount: number;

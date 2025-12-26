@@ -2,22 +2,43 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { store } from '../services/store';
 import { Lead } from '../types';
-import { draftWhatsAppMessage, identifyImage } from '../services/geminiService';
-import { ArrowLeft, MessageCircle, FileText, CheckCircle, Upload, Camera, Calendar } from 'lucide-react';
+import { draftWhatsAppMessage, identifyImage, generateDesignRender, geocodeAddress } from '../services/geminiService';
+import { ArrowLeft, MessageCircle, FileText, CheckCircle, Upload, Camera, Calendar, Phone, MapPin, PenTool, Sparkles, X, Save, Search, AlertCircle, ChevronRight } from 'lucide-react';
 
 export const LeadDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | undefined>(store.getLeads().find(l => l.id === id));
+  
+  // Feature States
   const [drafting, setDrafting] = useState<string | null>(null);
   const [draftContent, setDraftContent] = useState('');
+  
   const [analyzingImage, setAnalyzingImage] = useState(false);
   const [imageAnalysis, setImageAnalysis] = useState('');
+  
   const [prefDate, setPrefDate] = useState(lead?.preferredVisitDate || '');
+
+  // Design Studio State
+  const [showDesignStudio, setShowDesignStudio] = useState(false);
+  const [sketch, setSketch] = useState<string | null>(null);
+  const [designPrompt, setDesignPrompt] = useState('Modern minimal kitchen, teak wood finish, marble countertop');
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderedImage, setRenderedImage] = useState<string | null>(null);
+
+  // Map Edit State
+  const [isEditingMap, setIsEditingMap] = useState(false);
+  const [editAddress, setEditAddress] = useState('');
+  const [editLocation, setEditLocation] = useState<{lat: number, lng: number} | null>(null);
 
   useEffect(() => {
     const unsub = store.subscribe((leads) => {
-      setLead(leads.find(l => l.id === id));
+      const l = leads.find(l => l.id === id);
+      setLead(l);
+      if (l && !editLocation) {
+         setEditLocation(l.location);
+         setEditAddress(l.addressLabel);
+      }
     });
     return unsub;
   }, [id]);
@@ -54,22 +75,76 @@ export const LeadDetail: React.FC = () => {
     if (!file) return;
 
     setAnalyzingImage(true);
-    // Convert to base64
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64 = (reader.result as string).split(',')[1];
       const analysis = await identifyImage(base64);
       setImageAnalysis(analysis);
       setAnalyzingImage(false);
-      // Save image to lead (mock)
       store.updateLead(lead.id, { initialImages: [...(lead.initialImages || []), reader.result as string] });
     };
     reader.readAsDataURL(file);
   };
 
+  // --- Design Studio Handlers ---
+
+  const handleSketchUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+     const file = e.target.files?.[0];
+     if (file) {
+       const reader = new FileReader();
+       reader.onloadend = () => setSketch(reader.result as string);
+       reader.readAsDataURL(file);
+     }
+  };
+
+  const handleGenerateRender = async () => {
+    if (!sketch) return;
+    setIsRendering(true);
+    const base64Sketch = sketch.split(',')[1];
+    const resultUrl = await generateDesignRender(base64Sketch, designPrompt);
+    if (resultUrl) {
+       setRenderedImage(resultUrl);
+    } else {
+       alert("Failed to generate render. Try again.");
+    }
+    setIsRendering(false);
+  };
+
+  const saveRenderToLead = () => {
+    if (renderedImage && sketch) {
+       const newDesign = {
+          id: Date.now().toString(),
+          sketchUrl: sketch,
+          renderedUrl: renderedImage,
+          prompt: designPrompt,
+          createdAt: new Date().toISOString()
+       };
+       store.updateLead(lead.id, { generatedDesigns: [...(lead.generatedDesigns || []), newDesign] });
+       setShowDesignStudio(false);
+       setSketch(null);
+       setRenderedImage(null);
+    }
+  };
+
+  // --- Map Edit Handlers ---
+  const handleMapSearch = async () => {
+      const res = await geocodeAddress(editAddress);
+      if (res) {
+          setEditLocation({lat: res.lat, lng: res.lng});
+          setEditAddress(res.formatted);
+      }
+  };
+  
+  const saveMapUpdate = () => {
+      if (editLocation) {
+          store.updateLead(lead.id, { location: editLocation, addressLabel: editAddress });
+          setIsEditingMap(false);
+      }
+  };
+
   return (
     <div className="bg-white dark:bg-slate-900 min-h-screen pb-24 transition-colors duration-200">
-      <div className="sticky top-0 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 px-4 py-3 flex items-center z-10">
+      <div className="sticky top-0 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 px-4 py-3 flex items-center z-10 shadow-sm">
         <button onClick={() => navigate(-1)} className="mr-3 p-1 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-200">
           <ArrowLeft size={20} />
         </button>
@@ -80,7 +155,98 @@ export const LeadDetail: React.FC = () => {
       </div>
 
       <div className="p-4 space-y-6">
-        
+        {/* Contact & Map Card */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden relative group">
+           {/* Edit Button for Map */}
+           {!isEditingMap && (
+               <button 
+                 onClick={() => setIsEditingMap(true)}
+                 className="absolute top-2 right-2 z-10 bg-white/90 dark:bg-slate-800/90 p-2 rounded-full shadow text-gray-600 dark:text-gray-300 hover:text-blue-600"
+               >
+                  <PenTool size={14} />
+               </button>
+           )}
+
+           {isEditingMap ? (
+               <div className="p-4 bg-gray-50 dark:bg-slate-900">
+                   <div className="flex justify-between items-center mb-3">
+                       <h3 className="font-bold text-gray-900 dark:text-white text-sm">Edit Location</h3>
+                       <button onClick={() => setIsEditingMap(false)}><X size={16} className="text-gray-500"/></button>
+                   </div>
+                   
+                   <div className="flex space-x-2 mb-3">
+                       <input 
+                         value={editAddress} 
+                         onChange={(e) => setEditAddress(e.target.value)}
+                         className="flex-1 text-xs p-2 rounded border dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+                         placeholder="Search address..."
+                       />
+                       <button onClick={handleMapSearch} className="bg-blue-600 text-white p-2 rounded"><Search size={14}/></button>
+                   </div>
+                   
+                   <div className="grid grid-cols-2 gap-2 mb-3">
+                       <div>
+                           <label className="text-[10px] text-gray-500">Latitude</label>
+                           <input 
+                               type="number" step="any"
+                               value={editLocation?.lat}
+                               onChange={(e) => setEditLocation(prev => ({...prev!, lat: parseFloat(e.target.value)}))}
+                               className="w-full text-xs p-2 rounded border dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+                           />
+                       </div>
+                       <div>
+                           <label className="text-[10px] text-gray-500">Longitude</label>
+                           <input 
+                               type="number" step="any"
+                               value={editLocation?.lng}
+                               onChange={(e) => setEditLocation(prev => ({...prev!, lng: parseFloat(e.target.value)}))}
+                               className="w-full text-xs p-2 rounded border dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+                           />
+                       </div>
+                   </div>
+
+                   <button onClick={saveMapUpdate} className="w-full bg-black dark:bg-white text-white dark:text-black py-2 rounded text-xs font-bold">
+                       Save Location
+                   </button>
+               </div>
+           ) : (
+             <div className="h-48 w-full bg-gray-200 dark:bg-slate-700 relative">
+               <iframe
+                 width="100%"
+                 height="100%"
+                 frameBorder="0"
+                 scrolling="no"
+                 marginHeight={0}
+                 marginWidth={0}
+                 title="map"
+                 src={`https://maps.google.com/maps?q=${lead.location.lat},${lead.location.lng}&z=15&output=embed`}
+                 className="opacity-90 hover:opacity-100 transition-opacity"
+               ></iframe>
+               <a 
+                 href={`https://www.google.com/maps/search/?api=1&query=${lead.location.lat},${lead.location.lng}`}
+                 target="_blank"
+                 rel="noreferrer"
+                 className="absolute bottom-2 right-2 bg-white dark:bg-slate-800 text-xs px-2 py-1 rounded shadow text-blue-600 dark:text-blue-400 font-bold"
+               >
+                 Open in Google Maps
+               </a>
+             </div>
+           )}
+           
+           {!isEditingMap && (
+             <div className="p-4">
+               <div className="flex items-center text-sm text-gray-800 dark:text-gray-200 mb-2">
+                  <MapPin size={16} className="mr-2 text-gray-400" />
+                  {lead.addressLabel}
+               </div>
+               <div className="flex items-center text-sm text-gray-800 dark:text-gray-200">
+                  <Phone size={16} className="mr-2 text-gray-400" />
+                  {lead.whatsappNumber}
+               </div>
+             </div>
+           )}
+        </div>
+
         {/* Actions Grid */}
         <div className="grid grid-cols-2 gap-3">
           <button 
@@ -107,6 +273,95 @@ export const LeadDetail: React.FC = () => {
             <span className="text-xs font-semibold">Mark Paid</span>
           </button>
         </div>
+
+        {/* Gemini Design Studio Button */}
+        <button 
+          onClick={() => setShowDesignStudio(!showDesignStudio)}
+          className="w-full p-4 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl shadow-lg flex items-center justify-between"
+        >
+           <div className="flex items-center">
+             <Sparkles className="mr-3" />
+             <div className="text-left">
+               <div className="font-bold text-sm">AI Design Studio</div>
+               <div className="text-[10px] opacity-80">Sketch to Render</div>
+             </div>
+           </div>
+           <ChevronRight size={18} />
+        </button>
+
+        {/* Design Studio Panel */}
+        {showDesignStudio && (
+          <div className="bg-white dark:bg-slate-800 border border-violet-100 dark:border-violet-900 rounded-xl p-4 animate-in slide-in-from-top-4">
+             {!renderedImage ? (
+               <div className="space-y-4">
+                 <div className="border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl p-6 text-center">
+                    {sketch ? (
+                      <img src={sketch} alt="sketch" className="max-h-40 mx-auto rounded shadow-sm" />
+                    ) : (
+                      <label className="cursor-pointer block">
+                         <Upload className="mx-auto text-gray-400 mb-2" />
+                         <span className="text-xs text-gray-500">Upload rough sketch</span>
+                         <input type="file" accept="image/*" className="hidden" onChange={handleSketchUpload} />
+                      </label>
+                    )}
+                 </div>
+                 
+                 <div>
+                   <label className="text-xs font-bold text-gray-600 dark:text-gray-400">Design Prompt</label>
+                   <textarea 
+                     value={designPrompt}
+                     onChange={(e) => setDesignPrompt(e.target.value)}
+                     className="w-full mt-1 p-2 text-sm border rounded-lg dark:bg-slate-900 dark:border-slate-600 dark:text-white"
+                     rows={3}
+                   />
+                 </div>
+
+                 <button 
+                   onClick={handleGenerateRender}
+                   disabled={!sketch || isRendering}
+                   className="w-full py-3 bg-violet-600 text-white rounded-lg font-bold text-sm disabled:opacity-50 flex justify-center items-center"
+                 >
+                   {isRendering ? <Sparkles className="animate-spin mr-2" /> : <Sparkles className="mr-2" />}
+                   Generate Render
+                 </button>
+               </div>
+             ) : (
+               <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2">
+                     <div>
+                       <div className="text-[10px] text-gray-500 mb-1">Original</div>
+                       <img src={sketch!} className="w-full rounded-lg opacity-80" />
+                     </div>
+                     <div>
+                       <div className="text-[10px] text-violet-500 mb-1 font-bold">AI Render</div>
+                       <img src={renderedImage} className="w-full rounded-lg shadow-md border-2 border-violet-500" />
+                     </div>
+                  </div>
+                  <div className="flex space-x-2">
+                     <button onClick={() => setRenderedImage(null)} className="flex-1 py-2 border dark:border-slate-600 rounded-lg text-xs">Try Again</button>
+                     <button onClick={saveRenderToLead} className="flex-1 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-xs font-bold">Save to Gallery</button>
+                  </div>
+               </div>
+             )}
+          </div>
+        )}
+
+        {/* Generated Designs Gallery */}
+        {lead.generatedDesigns && lead.generatedDesigns.length > 0 && (
+          <section>
+             <h3 className="font-bold text-gray-900 dark:text-white mb-3">Design Concepts</h3>
+             <div className="grid grid-cols-2 gap-3">
+               {lead.generatedDesigns.map(design => (
+                 <div key={design.id} className="relative group">
+                    <img src={design.renderedUrl} className="w-full h-32 object-cover rounded-xl shadow-sm" />
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center">
+                       <p className="text-white text-[10px] px-2 text-center">{design.prompt}</p>
+                    </div>
+                 </div>
+               ))}
+             </div>
+          </section>
+        )}
 
         {/* Visit Preference Logic (Shown if Paid) */}
         {(lead.status === 'paid' || lead.status === 'visit_scheduled') && (
