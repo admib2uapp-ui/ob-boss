@@ -1,0 +1,9 @@
+{
+  "name": "Cabinex Operations",
+  "description": "End-to-end cabinet shop management app with AI-driven route optimization and business oversight.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
