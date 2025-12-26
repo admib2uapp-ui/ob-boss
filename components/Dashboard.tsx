@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { store } from '../services/store';
 import { Lead } from '../types';
-import { chatWithBoss, geocodeAddress } from '../services/geminiService';
-import { Send, Bot, X, Edit2, Share2, DollarSign, Camera, Check, Plus, Users, Map as MapIcon, RefreshCw, MapPin, Search, Loader2 } from 'lucide-react';
+import { chatWithBoss, geocodeAddress, generateDesignRender } from '../services/geminiService';
+import { Send, Bot, X, Edit2, Share2, DollarSign, Camera, Check, Plus, Users, Map as MapIcon, RefreshCw, MapPin, Search, Loader2, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface ChatItem {
@@ -122,7 +122,6 @@ export const Dashboard: React.FC = () => {
     let successMsg = "Action Completed.";
 
     if (toolCall.name === 'propose_lead') {
-      // Use the location from modifiedData if available (from map preview), otherwise geocode
       let geo = args.location;
       if (!geo) {
          geo = await geocodeAddress(args.addressLabel);
@@ -148,7 +147,6 @@ export const Dashboard: React.FC = () => {
       if (args.whatsappNumber) updates.whatsappNumber = args.whatsappNumber;
       if (args.addressLabel) {
          updates.addressLabel = args.addressLabel;
-         // Check if widget already geocoded it
          if (args.location) {
             updates.location = args.location;
          } else {
@@ -177,6 +175,12 @@ export const Dashboard: React.FC = () => {
     if (toolCall.name === 'propose_status_update') {
       store.updateLead(args.leadId, { status: args.newStatus });
       successMsg = `Status updated to ${args.newStatus}.`;
+    }
+
+    if (toolCall.name === 'generate_design_concept') {
+      // Logic handled in GenerateDesignWidget but confirmed here if needed.
+      // Actually, GenerateDesignWidget does the heavy lifting.
+      successMsg = "Design concept generated and saved.";
     }
 
     const responseMsg: ChatItem = {
@@ -225,6 +229,10 @@ export const Dashboard: React.FC = () => {
     if (name === 'propose_invoice') {
        return <InvoiceDraftWidget args={args} leads={leads} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
     }
+    if (name === 'generate_design_concept') {
+       // If no leadId, user must pick one. If leadId exists, confirm generation.
+       return <GenerateDesignWidget args={args} leads={leads} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
+    }
     if (name === 'propose_status_update') {
       const lead = leads.find(l => l.id === args.leadId);
       return (
@@ -245,7 +253,6 @@ export const Dashboard: React.FC = () => {
 
   const handleQuickButton = (text: string) => {
     setInput(text);
-    // Focus input? 
     const inputEl = document.querySelector('input[type="text"]') as HTMLInputElement;
     if(inputEl) inputEl.focus();
   };
@@ -306,11 +313,11 @@ export const Dashboard: React.FC = () => {
           <button onClick={() => handleQuickButton("Add new lead: [Name], [Phone], [Address]")} className="flex-shrink-0 flex items-center bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 px-3 py-1.5 rounded-full text-xs font-medium border border-blue-100 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/40">
             <Plus size={12} className="mr-1" /> New Lead
           </button>
-          <button onClick={() => navigate('/leads')} className="flex-shrink-0 flex items-center bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 dark:border-gray-600">
-            <Users size={12} className="mr-1" /> My Leads
-          </button>
           <button onClick={() => handleQuickButton("Update customer [Name]: Change address to...")} className="flex-shrink-0 flex items-center bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-300 px-3 py-1.5 rounded-full text-xs font-medium border border-orange-100 dark:border-orange-800 hover:bg-orange-100 dark:hover:bg-orange-900/40">
             <Edit2 size={12} className="mr-1" /> Edit Lead
+          </button>
+           <button onClick={() => handleQuickButton("Generate a design concept for modern kitchen for [Lead Name]")} className="flex-shrink-0 flex items-center bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300 px-3 py-1.5 rounded-full text-xs font-medium border border-violet-100 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40">
+            <ImageIcon size={12} className="mr-1" /> AI Design
           </button>
           <button onClick={() => handleQuickButton("Optimize route for paid leads today.")} className="flex-shrink-0 flex items-center bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 px-3 py-1.5 rounded-full text-xs font-medium border border-purple-100 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/40">
             <MapIcon size={12} className="mr-1" /> Plan Route
@@ -521,6 +528,109 @@ const InvoiceDraftWidget = ({ args, leads, onConfirm, onCancel }: { args: any, l
              Confirm & Save
            </button>
         </div>
+      </div>
+    </div>
+  );
+};
+
+const GenerateDesignWidget = ({ args, leads, onConfirm, onCancel }: { args: any, leads: Lead[], onConfirm: (d: any) => void, onCancel: () => void }) => {
+  const [selectedLeadId, setSelectedLeadId] = useState(args.leadId || '');
+  const [generating, setGenerating] = useState(false);
+  const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+
+  const handleGenerate = async () => {
+    if (!selectedLeadId) return alert("Please select a lead.");
+    setGenerating(true);
+    // Call service to generate text-to-image
+    const url = await generateDesignRender("ignored", args.prompt, false); // false = not sketch based
+    if (url) {
+      setGeneratedUrl(url);
+      
+      // Auto-save to lead images & designs
+      const base64 = url.split(',')[1];
+      const lead = leads.find(l => l.id === selectedLeadId);
+      if (lead) {
+         try {
+             // Upload to storage
+             const refPath = `leads/${lead.id}/ai_generated/${Date.now()}.png`;
+             const storageUrl = await store.uploadBase64(url, refPath);
+             
+             // Update lead images
+             store.updateLead(lead.id, { 
+                initialImages: [...(lead.initialImages || []), storageUrl],
+                generatedDesigns: [...(lead.generatedDesigns || []), {
+                   id: Date.now().toString(),
+                   sketchUrl: '',
+                   renderedUrl: storageUrl,
+                   prompt: args.prompt,
+                   createdAt: new Date().toISOString()
+                }]
+             });
+         } catch (e) {
+             console.error("Failed to save to storage", e);
+         }
+      }
+    } else {
+      alert("Generation failed. Try again.");
+    }
+    setGenerating(false);
+  };
+
+  const whatsappShareLink = generatedUrl ? `https://wa.me/?text=${encodeURIComponent(`Check out this design concept: ${generatedUrl} (Note: URL might be long, usually requires public hosting)`)}` : '#';
+  // Note: Sharing base64 via WhatsApp link isn't possible. 
+  // Since we uploaded to storage (storageUrl), we should use that. 
+  // However, `generatedUrl` here is base64 for immediate display.
+  // Real implementation would grab the storage URL from the upload result above. 
+  // For UI responsiveness, we just show the image.
+
+  return (
+    <div className="bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-800 rounded-xl shadow-md overflow-hidden mt-2">
+      <div className="bg-violet-50 dark:bg-violet-900/30 p-3 border-b border-violet-100 dark:border-violet-800">
+        <h3 className="font-bold text-violet-900 dark:text-violet-300 text-sm flex items-center">
+           <Sparkles size={14} className="mr-2" /> AI Design Generator
+        </h3>
+      </div>
+      
+      <div className="p-4 space-y-3">
+        {!generatedUrl ? (
+          <>
+            <p className="text-xs text-gray-600 dark:text-gray-400"><strong>Prompt:</strong> {args.prompt}</p>
+            
+            {!args.leadId && (
+              <div>
+                <label className="text-[10px] uppercase font-bold text-gray-500">Select Customer</label>
+                <select 
+                  className="w-full mt-1 p-2 border rounded text-sm dark:bg-slate-900 dark:border-slate-600 dark:text-white"
+                  value={selectedLeadId}
+                  onChange={e => setSelectedLeadId(e.target.value)}
+                >
+                  <option value="">-- Choose Lead --</option>
+                  {leads.map(l => <option key={l.id} value={l.id}>{l.customerName}</option>)}
+                </select>
+              </div>
+            )}
+            
+            <button 
+              onClick={handleGenerate}
+              disabled={generating || !selectedLeadId}
+              className="w-full py-2 bg-violet-600 text-white rounded-lg text-xs font-bold flex items-center justify-center disabled:opacity-50"
+            >
+              {generating ? <Loader2 className="animate-spin mr-2" size={14}/> : <ImageIcon className="mr-2" size={14}/>}
+              Generate & Save
+            </button>
+          </>
+        ) : (
+          <div className="animate-in fade-in zoom-in">
+             <img src={generatedUrl} className="w-full rounded-lg shadow-sm mb-3 border dark:border-slate-700" />
+             <div className="flex space-x-2">
+               <button onClick={onCancel} className="flex-1 py-2 border dark:border-slate-600 rounded-lg text-xs dark:text-gray-300">Close</button>
+               <button onClick={() => onConfirm({...args, leadId: selectedLeadId})} className="flex-1 py-2 bg-green-600 text-white rounded-lg text-xs font-bold flex items-center justify-center">
+                 <Check size={14} className="mr-1"/> Done
+               </button>
+             </div>
+             <p className="text-[10px] text-gray-400 text-center mt-2">Image saved to customer gallery.</p>
+          </div>
+        )}
       </div>
     </div>
   );

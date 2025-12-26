@@ -1,8 +1,15 @@
 import { GoogleGenAI, FunctionDeclaration, Type, Tool } from "@google/genai";
 import { Lead } from '../types';
 
-const API_KEY = process.env.API_KEY || ''; 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+// SAFE API KEY ACCESS
+const getApiKey = () => {
+  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+    return process.env.API_KEY;
+  }
+  return ''; // Rely on user/environment to provide it, or handle empty case
+};
+
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 // --- SYSTEM INSTRUCTIONS ---
 const BOSS_SYSTEM_INSTRUCTION = `
@@ -15,13 +22,16 @@ RULES:
 3. **Lead Management**:
    - If the user wants to ADD a new person, use 'propose_lead'.
    - If the user wants to EDIT/CHANGE an existing person, use 'propose_lead_update'. You MUST identify the 'leadId' from the context.
-4. **Route Logic**: 
+4. **Design Generation**:
+   - If the user asks to create/generate/imagine a design, cabinet, or kitchen image, use 'generate_design_concept'.
+   - If you don't know which lead it is for, call the tool WITHOUT the leadId, and the UI will ask the user.
+5. **Route Logic**: 
    - Travel speed in Colombo is approx 20km/h.
    - Each measurement takes 20 minutes.
    - Total daily work limit is 8 hours.
    - If a lead has a 'preferredVisitDate', prioritize that date.
-5. **Tone**: Professional, efficiency-focused, slightly strict but helpful.
-6. **Context**: You know the geography of Colombo (Colombo 1-15, Suburbs).
+6. **Tone**: Professional, efficiency-focused, slightly strict but helpful.
+7. **Context**: You know the geography of Colombo (Colombo 1-15, Suburbs).
 
 When the user provides an image:
 - Analyze it for cabinet requirements.
@@ -86,6 +96,20 @@ const proposeStatusUpdateTool: FunctionDeclaration = {
       reason: { type: Type.STRING }
     },
     required: ['leadId', 'newStatus']
+  }
+};
+
+const generateDesignConceptTool: FunctionDeclaration = {
+  name: 'generate_design_concept',
+  description: 'Generate a visual design concept or image based on a text prompt.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      prompt: { type: Type.STRING, description: "Detailed description of the kitchen/cabinet design" },
+      leadId: { type: Type.STRING, description: "The ID of the lead this design is for. If unknown, omit this." },
+      style: { type: Type.STRING, description: "Modern, Rustic, Minimalist, etc." }
+    },
+    required: ['prompt']
   }
 };
 
@@ -162,7 +186,7 @@ export const chatWithBoss = async (
       model: 'gemini-3-pro-preview',
       config: {
         systemInstruction: `${BOSS_SYSTEM_INSTRUCTION}\n\nCURRENT DB STATE:\n${leadContext}`,
-        tools: [{ functionDeclarations: [proposeLeadTool, proposeLeadUpdateTool, proposeInvoiceTool, proposeStatusUpdateTool] }],
+        tools: [{ functionDeclarations: [proposeLeadTool, proposeLeadUpdateTool, proposeInvoiceTool, proposeStatusUpdateTool, generateDesignConceptTool] }],
       },
       history: history.map(h => ({
         role: h.role,
@@ -227,17 +251,19 @@ export const identifyImage = async (base64Data: string) => {
   }
 }
 
-// Generate a realistic render from a sketch
-export const generateDesignRender = async (sketchBase64: string, prompt: string) => {
+// Generate a realistic render from a sketch OR prompt
+export const generateDesignRender = async (input: string, prompt: string, isSketch: boolean = true) => {
   try {
+    const parts: any[] = [{ text: `Generate a photorealistic interior design render. Prompt: ${prompt}.` }];
+    
+    if (isSketch) {
+      parts.unshift({ inlineData: { mimeType: 'image/jpeg', data: input } });
+      parts[1].text += " Maintain the layout of the provided sketch strictly.";
+    }
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: sketchBase64 } },
-          { text: `Turn this sketch into a realistic photo-quality interior design render. Style: ${prompt}. Maintain the layout of the sketch strictly.` }
-        ]
-      }
+      contents: { parts }
     });
 
     let imageUrl = '';
