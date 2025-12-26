@@ -1,13 +1,13 @@
 // Firestore Schema Definitions & Shared Types
 
-export type LeadStatus = 
-  | 'new' 
-  | 'invoice_sent' 
-  | 'paid' 
-  | 'visit_scheduled' 
-  | 'measured' 
-  | 'quoted' 
-  | 'won' 
+export type LeadStatus =
+  | 'new'
+  | 'invoice_sent'
+  | 'paid'
+  | 'visit_scheduled'
+  | 'measured'
+  | 'quoted'
+  | 'won'
   | 'lost';
 
 export interface GeoPoint {
@@ -71,6 +71,17 @@ export interface RouteCluster {
   totalDistanceKm: number; // Estimated
   savings: string; // "High", "Medium", "Low"
   suggestedDate: string;
+}
+
+export type UserRole = 'admin' | 'staff' | 'installer';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  name: string;
+  whatsappNumber?: string;
+  role: UserRole;
+  createdAt: string;
 }
 
 // Chat Types
