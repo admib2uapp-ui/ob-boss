@@ -3,10 +3,7 @@ import { Lead } from '../types';
 
 // SAFE API KEY ACCESS
 const getApiKey = () => {
-  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-    return process.env.API_KEY;
-  }
-  return ''; // Rely on user/environment to provide it, or handle empty case
+  return import.meta.env.VITE_GEMINI_API_KEY || '';
 };
 
 const ai = new GoogleGenAI({ apiKey: getApiKey() });
