@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { store } from '../services/store';
 import { Lead } from '../types';
 import { draftWhatsAppMessage, identifyImage, generateDesignRender, geocodeAddress } from '../services/geminiService';
-import { ArrowLeft, MessageCircle, FileText, CheckCircle, Upload, Camera, Calendar, Phone, MapPin, PenTool, Sparkles, X, Save, Search, AlertCircle, ChevronRight } from 'lucide-react';
+import { ArrowLeft, MessageCircle, FileText, CheckCircle, Upload, Camera, Calendar, Phone, MapPin, PenTool, Sparkles, X, Save, Search, AlertCircle, ChevronRight, Loader2 } from 'lucide-react';
 
 export const LeadDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +24,7 @@ export const LeadDetail: React.FC = () => {
   const [sketch, setSketch] = useState<string | null>(null);
   const [designPrompt, setDesignPrompt] = useState('Modern minimal kitchen, teak wood finish, marble countertop');
   const [isRendering, setIsRendering] = useState(false);
+  const [isSavingDesign, setIsSavingDesign] = useState(false);
   const [renderedImage, setRenderedImage] = useState<string | null>(null);
 
   // Map Edit State
@@ -38,6 +39,7 @@ export const LeadDetail: React.FC = () => {
       if (l && !editLocation) {
          setEditLocation(l.location);
          setEditAddress(l.addressLabel);
+         setPrefDate(l.preferredVisitDate || '');
       }
     });
     return unsub;
@@ -72,18 +74,33 @@ export const LeadDetail: React.FC = () => {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !lead) return;
 
     setAnalyzingImage(true);
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64 = (reader.result as string).split(',')[1];
-      const analysis = await identifyImage(base64);
-      setImageAnalysis(analysis);
-      setAnalyzingImage(false);
-      store.updateLead(lead.id, { initialImages: [...(lead.initialImages || []), reader.result as string] });
-    };
-    reader.readAsDataURL(file);
+
+    try {
+        // 1. Upload to Firebase Storage
+        const path = `leads/${lead.id}/site_photos/${Date.now()}_${file.name}`;
+        const url = await store.uploadImage(file, path);
+
+        // 2. Read as base64 purely for Gemini Analysis
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(',')[1];
+          const analysis = await identifyImage(base64);
+          setImageAnalysis(analysis);
+          
+          // 3. Update Firestore
+          store.updateLead(lead.id, { initialImages: [...(lead.initialImages || []), url] });
+          setAnalyzingImage(false);
+        };
+        reader.readAsDataURL(file);
+
+    } catch (err) {
+        console.error("Upload failed", err);
+        setAnalyzingImage(false);
+        alert("Failed to upload image.");
+    }
   };
 
   // --- Design Studio Handlers ---
@@ -110,19 +127,30 @@ export const LeadDetail: React.FC = () => {
     setIsRendering(false);
   };
 
-  const saveRenderToLead = () => {
+  const saveRenderToLead = async () => {
     if (renderedImage && sketch) {
-       const newDesign = {
-          id: Date.now().toString(),
-          sketchUrl: sketch,
-          renderedUrl: renderedImage,
-          prompt: designPrompt,
-          createdAt: new Date().toISOString()
-       };
-       store.updateLead(lead.id, { generatedDesigns: [...(lead.generatedDesigns || []), newDesign] });
-       setShowDesignStudio(false);
-       setSketch(null);
-       setRenderedImage(null);
+       setIsSavingDesign(true);
+       try {
+           const sketchRef = await store.uploadBase64(sketch, `leads/${lead.id}/designs/${Date.now()}_sketch.png`);
+           const renderRef = await store.uploadBase64(renderedImage, `leads/${lead.id}/designs/${Date.now()}_render.png`);
+    
+           const newDesign = {
+              id: Date.now().toString(),
+              sketchUrl: sketchRef,
+              renderedUrl: renderRef,
+              prompt: designPrompt,
+              createdAt: new Date().toISOString()
+           };
+           
+           store.updateLead(lead.id, { generatedDesigns: [...(lead.generatedDesigns || []), newDesign] });
+           setShowDesignStudio(false);
+           setSketch(null);
+           setRenderedImage(null);
+       } catch (error) {
+           console.error("Failed to save design", error);
+           alert("Error saving design to storage.");
+       }
+       setIsSavingDesign(false);
     }
   };
 
@@ -339,7 +367,13 @@ export const LeadDetail: React.FC = () => {
                   </div>
                   <div className="flex space-x-2">
                      <button onClick={() => setRenderedImage(null)} className="flex-1 py-2 border dark:border-slate-600 rounded-lg text-xs">Try Again</button>
-                     <button onClick={saveRenderToLead} className="flex-1 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-xs font-bold">Save to Gallery</button>
+                     <button 
+                       onClick={saveRenderToLead} 
+                       disabled={isSavingDesign}
+                       className="flex-1 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-xs font-bold flex items-center justify-center"
+                     >
+                       {isSavingDesign ? <Loader2 className="animate-spin" size={14} /> : 'Save to Gallery'}
+                     </button>
                   </div>
                </div>
              )}

@@ -1,60 +1,37 @@
-import { Lead, RouteCluster } from '../types';
+import { Lead } from '../types';
+import { db, storage } from './firebase';
+import { 
+  collection, onSnapshot, addDoc, updateDoc, doc, 
+  query, orderBy, Timestamp, setDoc 
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, uploadString } from 'firebase/storage';
 
-// Initial Mock Data - Colombo, Sri Lanka Context
-const MOCK_LEADS: Lead[] = [
-  {
-    id: 'l-1',
-    customerName: 'Silva Residences',
-    whatsappNumber: '94771234567',
-    location: { lat: 6.9147, lng: 79.8538 }, // Kollupitiya
-    addressLabel: 'Galle Rd, Kollupitiya',
-    status: 'paid',
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    initialImages: ['https://picsum.photos/400/300?random=1'],
-    notes: [{id: 'n1', text: 'Wants teak finish.', createdAt: new Date().toISOString(), author: 'user'}],
-    visitChargeInvoice: { amount: 2500, paid: true, paidAt: new Date().toISOString() },
-    visits: [],
-  },
-  {
-    id: 'l-2',
-    customerName: 'Perera Kitchens',
-    whatsappNumber: '94777654321',
-    location: { lat: 6.9271, lng: 79.8612 }, // Cinnamon Gardens
-    addressLabel: 'Gregorys Road, Colombo 7',
-    status: 'paid',
-    createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    notes: [],
-    visitChargeInvoice: { amount: 2500, paid: true, paidAt: new Date().toISOString() },
-    visits: [],
-  },
-  {
-    id: 'l-3',
-    customerName: 'Fernando Traders',
-    whatsappNumber: '94711112222',
-    location: { lat: 6.9405, lng: 79.8549 }, // Pettah
-    addressLabel: 'Main Street, Pettah',
-    status: 'new',
-    createdAt: new Date().toISOString(),
-    notes: [],
-    visits: [],
-  },
-  {
-    id: 'l-4',
-    customerName: 'Dr. Gunawardena',
-    whatsappNumber: '94779998888',
-    location: { lat: 6.8969, lng: 79.8587 }, // Bambalapitiya
-    addressLabel: 'Duplication Rd, Bamba',
-    status: 'invoice_sent',
-    createdAt: new Date().toISOString(),
-    notes: [],
-    visitChargeInvoice: { amount: 2500, paid: false },
-    visits: [],
-  },
-];
+const COLLECTION_NAME = 'leads';
 
 class StoreService {
-  private leads: Lead[] = MOCK_LEADS;
+  private leads: Lead[] = [];
   private listeners: ((leads: Lead[]) => void)[] = [];
+  private unsubscribe: (() => void) | null = null;
+
+  constructor() {
+    this.init();
+  }
+
+  private init() {
+    const q = query(collection(db, COLLECTION_NAME), orderBy('createdAt', 'desc'));
+    this.unsubscribe = onSnapshot(q, (snapshot) => {
+      this.leads = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          // Convert Firestore Timestamps to ISO strings for the frontend
+          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt || new Date().toISOString(),
+        } as Lead;
+      });
+      this.notify();
+    });
+  }
 
   getLeads(): Lead[] {
     return [...this.leads];
@@ -76,27 +53,61 @@ class StoreService {
     this.listeners.forEach(l => l([...this.leads]));
   }
 
-  addLead(lead: Lead) {
-    this.leads = [lead, ...this.leads];
-    this.notify();
-  }
+  async addLead(lead: Lead) {
+    // We let Firestore generate ID, or if ID is provided (like from manual creation with Date.now), we can use it.
+    // However, clean usage is to let Firestore generate. But our app assigns IDs in UI.
+    // Let's check if lead.id starts with 'l-' (our manual ID). 
+    // Ideally, we treat the local ID as temporary or just use addDoc which returns a ref with new ID.
+    // But to keep it simple with existing code that might rely on the object passed:
+    
+    const { id, ...leadData } = lead;
+    
+    // Use Firestore timestamp
+    const dataToSave = {
+        ...leadData,
+        createdAt: Timestamp.now()
+    };
 
-  updateLead(id: string, updates: Partial<Lead>) {
-    this.leads = this.leads.map(l => l.id === id ? { ...l, ...updates } : l);
-    this.notify();
-  }
-
-  addNote(leadId: string, text: string) {
-    const lead = this.getLeadById(leadId);
-    if(lead) {
-      const newNote = { id: Date.now().toString(), text, createdAt: new Date().toISOString(), author: 'user' };
-      this.updateLead(leadId, { notes: [...lead.notes, newNote] });
+    if (id && id.startsWith('l-')) {
+         // Create a new doc, ignoring the client-side ID to avoid collisions, 
+         // OR use the client ID as the doc ID. Using client ID 'l-...' is fine.
+         await setDoc(doc(db, COLLECTION_NAME, id), dataToSave);
+    } else {
+         await addDoc(collection(db, COLLECTION_NAME), dataToSave);
     }
   }
 
-  // Helper to simulate "Filtering by status"
-  getLeadsByStatus(status: Lead['status']): Lead[] {
-    return this.leads.filter(l => l.status === status);
+  async updateLead(id: string, updates: Partial<Lead>) {
+    const leadRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(leadRef, updates);
+  }
+
+  async addNote(leadId: string, text: string) {
+    const lead = this.getLeadById(leadId);
+    if(lead) {
+      const newNote = { 
+        id: Date.now().toString(), 
+        text, 
+        createdAt: new Date().toISOString(), 
+        author: 'user' 
+      };
+      const notes = [...(lead.notes || []), newNote];
+      await this.updateLead(leadId, { notes });
+    }
+  }
+  
+  // --- Storage Helpers ---
+
+  async uploadImage(file: File, path: string): Promise<string> {
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  }
+
+  async uploadBase64(dataUrl: string, path: string): Promise<string> {
+    const storageRef = ref(storage, path);
+    await uploadString(storageRef, dataUrl, 'data_url');
+    return await getDownloadURL(storageRef);
   }
 }
 
