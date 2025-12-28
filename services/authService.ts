@@ -26,6 +26,7 @@ class AuthService {
   private currentUser: User | null = null;
   private userProfile: UserProfile | null = null;
   private listeners: ((user: User | null, profile: UserProfile | null) => void)[] = [];
+  private authStateResolved = false;
 
   constructor() {
     onAuthStateChanged(auth, async (user) => {
@@ -35,6 +36,7 @@ class AuthService {
       } else {
         this.userProfile = null;
       }
+      this.authStateResolved = true;
       this.notify();
     });
   }
@@ -86,7 +88,9 @@ class AuthService {
 
   subscribe(listener: (user: User | null, profile: UserProfile | null) => void) {
     this.listeners.push(listener);
-    listener(this.currentUser, this.userProfile);
+    if (this.authStateResolved) {
+      listener(this.currentUser, this.userProfile);
+    }
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
