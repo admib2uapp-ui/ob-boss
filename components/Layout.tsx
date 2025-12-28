@@ -4,8 +4,12 @@ import { LayoutDashboard, Users, Map, Moon, Sun, LogOut, Settings, User as UserI
 import { authService } from '../services/authService';
 import { UserProfile } from '../types.ts';
 
-export const Layout: React.FC = () => {
-  const [darkMode, setDarkMode] = useState(false);
+interface LayoutProps {
+  darkMode: boolean;
+  setDarkMode: (value: boolean) => void;
+}
+
+export const Layout: React.FC<LayoutProps> = ({ darkMode, setDarkMode }) => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const navigate = useNavigate();
 
@@ -14,14 +18,6 @@ export const Layout: React.FC = () => {
       setProfile(p);
     });
   }, []);
-
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [darkMode]);
 
   const handleLogout = async () => {
     await authService.logout();

@@ -19,6 +19,19 @@ const App: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Theme State - Initialize from DOM (set by index.html script)
+  const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
+
   useEffect(() => {
     return authService.subscribe((u, p) => {
       setUser(u);
@@ -29,8 +42,8 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <Loader2 className="animate-spin text-blue-500" size={40} />
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center">
+        <Loader2 className="animate-spin text-blue-600 dark:text-blue-500" size={40} />
       </div>
     );
   }
@@ -52,7 +65,7 @@ const App: React.FC = () => {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
-        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+        <Route path="/" element={<ProtectedRoute><Layout darkMode={darkMode} setDarkMode={setDarkMode} /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="leads" element={<LeadManagement />} />
           <Route path="leads/:id" element={<LeadDetail />} />
