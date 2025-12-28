@@ -10,19 +10,13 @@ interface ChatItem {
   role: 'user' | 'model';
   text?: string;
   image?: string;
-  toolCall?: any; 
+  toolCall?: any;
   toolResponse?: string;
 }
 
 export const Dashboard: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [chatHistory, setChatHistory] = useState<ChatItem[]>([
-    {
-      id: 'welcome',
-      role: 'model',
-      text: "Ayubowan! I'm the Shop Manager. Upload site photos or tell me about new leads in Colombo.",
-    }
-  ]);
+  const [chatHistory, setChatHistory] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -30,7 +24,12 @@ export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    return store.subscribe(setLeads);
+    const unsubLeads = store.subscribe(setLeads);
+    const unsubChat = store.subscribeChat(setChatHistory);
+    return () => {
+      unsubLeads();
+      unsubChat();
+    };
   }, []);
 
   useEffect(() => {
@@ -50,35 +49,36 @@ export const Dashboard: React.FC = () => {
       image: selectedImage || undefined
     };
 
-    setChatHistory(prev => [...prev, userMsg]);
+    const newHistory = [...chatHistory, userMsg];
+    store.setChatHistory(newHistory);
     setInput('');
-    const imgToSend = selectedImage ? selectedImage.split(',')[1] : null; 
+    const imgToSend = selectedImage ? selectedImage.split(',')[1] : null;
     setSelectedImage(null);
     setIsProcessing(true);
 
     try {
       const apiHistory = [];
-      for (const h of chatHistory) {
+      for (const h of newHistory) {
         if (h.role === 'user') {
           const parts: any[] = [];
           if (h.text) parts.push({ text: h.text });
           if (h.image) parts.push({ inlineData: { mimeType: 'image/jpeg', data: h.image.split(',')[1] } });
           if (h.toolResponse && h.toolCall) {
-            parts.push({ 
-              functionResponse: { name: h.toolCall.name, response: { result: h.toolResponse } } 
+            parts.push({
+              functionResponse: { name: h.toolCall.name, response: { result: h.toolResponse } }
             });
           }
           apiHistory.push({ role: 'user', parts });
         } else {
-           const parts: any[] = [];
-           if (h.text) parts.push({ text: h.text });
-           if (h.toolCall) parts.push({ functionCall: h.toolCall });
-           apiHistory.push({ role: 'model', parts });
+          const parts: any[] = [];
+          if (h.text) parts.push({ text: h.text });
+          if (h.toolCall) parts.push({ functionCall: h.toolCall });
+          apiHistory.push({ role: 'model', parts });
         }
       }
 
       const result = await chatWithBoss(apiHistory, userMsg.text || "Analyze this image", imgToSend, leads);
-      
+
       const content = result.candidates?.[0]?.content;
       const functionCalls = content?.parts?.filter(p => p.functionCall).map(p => p.functionCall);
       const textResponse = content?.parts?.filter(p => p.text).map(p => p.text).join('') || '';
@@ -87,12 +87,12 @@ export const Dashboard: React.FC = () => {
         const toolMsg: ChatItem = {
           id: Date.now().toString() + '_tool',
           role: 'model',
-          text: textResponse, 
-          toolCall: functionCalls[0] 
+          text: textResponse,
+          toolCall: functionCalls[0]
         };
-        setChatHistory(prev => [...prev, toolMsg]);
+        store.setChatHistory([...newHistory, toolMsg]);
       } else {
-        setChatHistory(prev => [...prev, {
+        store.setChatHistory([...newHistory, {
           id: Date.now().toString() + '_resp',
           role: 'model',
           text: textResponse || "I didn't understand that."
@@ -101,7 +101,7 @@ export const Dashboard: React.FC = () => {
 
     } catch (e) {
       console.error(e);
-      setChatHistory(prev => [...prev, { id: Date.now() + 'err', role: 'model', text: "Connection error. Please try again." }]);
+      store.setChatHistory([...newHistory, { id: Date.now() + 'err', role: 'model', text: "Connection error. Please try again." }]);
     }
     setIsProcessing(false);
   };
@@ -124,9 +124,9 @@ export const Dashboard: React.FC = () => {
     if (toolCall.name === 'propose_lead') {
       let geo = args.location;
       if (!geo) {
-         geo = await geocodeAddress(args.addressLabel);
+        geo = await geocodeAddress(args.addressLabel);
       }
-      
+
       store.addLead({
         id: `l-${Date.now()}`,
         customerName: args.customerName,
@@ -146,13 +146,13 @@ export const Dashboard: React.FC = () => {
       if (args.customerName) updates.customerName = args.customerName;
       if (args.whatsappNumber) updates.whatsappNumber = args.whatsappNumber;
       if (args.addressLabel) {
-         updates.addressLabel = args.addressLabel;
-         if (args.location) {
-            updates.location = args.location;
-         } else {
-            const geo = await geocodeAddress(args.addressLabel);
-            if (geo) updates.location = { lat: geo.lat, lng: geo.lng };
-         }
+        updates.addressLabel = args.addressLabel;
+        if (args.location) {
+          updates.location = args.location;
+        } else {
+          const geo = await geocodeAddress(args.addressLabel);
+          if (geo) updates.location = { lat: geo.lat, lng: geo.lng };
+        }
       }
       store.updateLead(args.leadId, updates);
       if (args.noteToAdd) {
@@ -164,9 +164,9 @@ export const Dashboard: React.FC = () => {
     if (toolCall.name === 'propose_invoice') {
       const lead = store.getLeadById(args.leadId);
       if (lead) {
-        store.updateLead(lead.id, { 
+        store.updateLead(lead.id, {
           visitChargeInvoice: { amount: args.amount, paid: false },
-          status: 'invoice_sent' 
+          status: 'invoice_sent'
         });
         successMsg = `Invoice for LKR ${args.amount} attached to ${lead.customerName}.`;
       }
@@ -187,11 +187,11 @@ export const Dashboard: React.FC = () => {
       id: Date.now().toString() + '_tool_resp',
       role: 'user',
       text: "Action confirmed.",
-      toolCall: toolCall, 
+      toolCall: toolCall,
       toolResponse: successMsg
     };
 
-    setChatHistory(prev => [...prev, responseMsg]);
+    store.setChatHistory([...chatHistory, responseMsg]);
   };
 
   const cancelToolAction = (toolCall: any) => {
@@ -202,7 +202,7 @@ export const Dashboard: React.FC = () => {
       toolCall: toolCall,
       toolResponse: "User cancelled the action."
     };
-    setChatHistory(prev => [...prev, responseMsg]);
+    store.setChatHistory([...chatHistory, responseMsg]);
   };
 
   // --- RENDERERS ---
@@ -212,9 +212,9 @@ export const Dashboard: React.FC = () => {
 
     if (isHandled) {
       return (
-         <div className="bg-gray-100 dark:bg-slate-800 p-3 rounded-lg text-xs text-gray-500 dark:text-gray-400 italic mt-2 border border-gray-200 dark:border-slate-700">
-           Widget Action Completed.
-         </div>
+        <div className="bg-gray-100 dark:bg-slate-800 p-3 rounded-lg text-xs text-gray-500 dark:text-gray-400 italic mt-2 border border-gray-200 dark:border-slate-700">
+          Widget Action Completed.
+        </div>
       );
     }
 
@@ -227,11 +227,11 @@ export const Dashboard: React.FC = () => {
       return <LeadUpdateWidget args={args} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
     }
     if (name === 'propose_invoice') {
-       return <InvoiceDraftWidget args={args} leads={leads} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
+      return <InvoiceDraftWidget args={args} leads={leads} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
     }
     if (name === 'generate_design_concept') {
-       // If no leadId, user must pick one. If leadId exists, confirm generation.
-       return <GenerateDesignWidget args={args} leads={leads} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
+      // If no leadId, user must pick one. If leadId exists, confirm generation.
+      return <GenerateDesignWidget args={args} leads={leads} onConfirm={(d) => confirmToolAction(msg.id, msg.toolCall, d)} onCancel={() => cancelToolAction(msg.toolCall)} />;
     }
     if (name === 'propose_status_update') {
       const lead = leads.find(l => l.id === args.leadId);
@@ -254,25 +254,25 @@ export const Dashboard: React.FC = () => {
   const handleQuickButton = (text: string) => {
     setInput(text);
     const inputEl = document.querySelector('input[type="text"]') as HTMLInputElement;
-    if(inputEl) inputEl.focus();
+    if (inputEl) inputEl.focus();
   };
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900 max-w-2xl mx-auto shadow-xl transition-colors duration-200">
       {/* Header */}
       <div className="bg-white dark:bg-slate-800 p-4 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between">
-         <div className="flex items-center">
-            <div className="bg-blue-600 p-2 rounded-full text-white mr-3 shadow-lg shadow-blue-500/30">
-              <Bot size={20} />
-            </div>
-            <div>
-              <h1 className="font-bold text-gray-900 dark:text-white leading-tight">Cabinex Boss</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Colombo Operations • Online</p>
-            </div>
-         </div>
-         <div className="text-xs font-mono bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded text-gray-500 dark:text-gray-300">
-           {leads.length} Leads
-         </div>
+        <div className="flex items-center">
+          <div className="bg-blue-600 p-2 rounded-full text-white mr-3 shadow-lg shadow-blue-500/30">
+            <Bot size={20} />
+          </div>
+          <div>
+            <h1 className="font-bold text-gray-900 dark:text-white leading-tight">Cabinex Boss</h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Colombo Operations • Online</p>
+          </div>
+        </div>
+        <div className="text-xs font-mono bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded text-gray-500 dark:text-gray-300">
+          {leads.length} Leads
+        </div>
       </div>
 
       {/* Chat Area */}
@@ -280,13 +280,12 @@ export const Dashboard: React.FC = () => {
         {chatHistory.map((msg) => (
           <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
             {(msg.text || msg.image) && (
-              <div className={`max-w-[85%] rounded-2xl p-3 text-sm shadow-sm ${
-                msg.role === 'user' 
-                  ? 'bg-blue-600 text-white rounded-br-none' 
-                  : 'bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-200 border border-gray-100 dark:border-slate-700 rounded-bl-none'
-              }`}>
+              <div className={`max-w-[85%] rounded-2xl p-3 text-sm shadow-sm ${msg.role === 'user'
+                ? 'bg-blue-600 text-white rounded-br-none'
+                : 'bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-200 border border-gray-100 dark:border-slate-700 rounded-bl-none'
+                }`}>
                 {msg.image && (
-                   <img src={msg.image} alt="upload" className="w-full h-32 object-cover rounded-lg mb-2" />
+                  <img src={msg.image} alt="upload" className="w-full h-32 object-cover rounded-lg mb-2" />
                 )}
                 <div className="whitespace-pre-wrap">{msg.text}</div>
               </div>
@@ -316,7 +315,7 @@ export const Dashboard: React.FC = () => {
           <button onClick={() => handleQuickButton("Update customer [Name]: Change address to...")} className="flex-shrink-0 flex items-center bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-300 px-3 py-1.5 rounded-full text-xs font-medium border border-orange-100 dark:border-orange-800 hover:bg-orange-100 dark:hover:bg-orange-900/40">
             <Edit2 size={12} className="mr-1" /> Edit Lead
           </button>
-           <button onClick={() => handleQuickButton("Generate a design concept for modern kitchen for [Lead Name]")} className="flex-shrink-0 flex items-center bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300 px-3 py-1.5 rounded-full text-xs font-medium border border-violet-100 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40">
+          <button onClick={() => handleQuickButton("Generate a design concept for modern kitchen for [Lead Name]")} className="flex-shrink-0 flex items-center bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300 px-3 py-1.5 rounded-full text-xs font-medium border border-violet-100 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40">
             <ImageIcon size={12} className="mr-1" /> AI Design
           </button>
           <button onClick={() => handleQuickButton("Optimize route for paid leads today.")} className="flex-shrink-0 flex items-center bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 px-3 py-1.5 rounded-full text-xs font-medium border border-purple-100 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/40">
@@ -346,7 +345,7 @@ export const Dashboard: React.FC = () => {
               placeholder="Type message..."
               className="flex-1 bg-gray-100 dark:bg-slate-700 dark:text-white border-0 rounded-full px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-gray-400"
             />
-            <button 
+            <button
               onClick={() => handleSend()}
               disabled={(!input && !selectedImage) || isProcessing}
               className="p-3 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-md shadow-blue-600/20"
@@ -365,16 +364,16 @@ export const Dashboard: React.FC = () => {
 const LeadDraftWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: (d: any) => void, onCancel: () => void }) => {
   const [data, setData] = useState(args);
   const [editing, setEditing] = useState(false);
-  const [geoLoc, setGeoLoc] = useState<{lat: number, lng: number} | null>(null);
+  const [geoLoc, setGeoLoc] = useState<{ lat: number, lng: number } | null>(null);
   const [loadingMap, setLoadingMap] = useState(false);
 
   // Initial Geocode to show map preview
   useEffect(() => {
     const fetchGeo = async () => {
-       setLoadingMap(true);
-       const geo = await geocodeAddress(data.addressLabel);
-       if (geo) setGeoLoc({ lat: geo.lat, lng: geo.lng });
-       setLoadingMap(false);
+      setLoadingMap(true);
+      const geo = await geocodeAddress(data.addressLabel);
+      if (geo) setGeoLoc({ lat: geo.lat, lng: geo.lng });
+      setLoadingMap(false);
     };
     fetchGeo();
   }, []); // Run once on mount based on initial args
@@ -383,9 +382,9 @@ const LeadDraftWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: 
     setLoadingMap(true);
     const geo = await geocodeAddress(data.addressLabel);
     if (geo) {
-        setGeoLoc({ lat: geo.lat, lng: geo.lng });
-        // Update data so when we confirm, it has the new address/loc
-        setData({ ...data, addressLabel: geo.formatted, location: { lat: geo.lat, lng: geo.lng } });
+      setGeoLoc({ lat: geo.lat, lng: geo.lng });
+      // Update data so when we confirm, it has the new address/loc
+      setData({ ...data, addressLabel: geo.formatted, location: { lat: geo.lat, lng: geo.lng } });
     }
     setLoadingMap(false);
   };
@@ -394,21 +393,21 @@ const LeadDraftWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: 
     <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-md overflow-hidden animate-in fade-in zoom-in duration-300">
       <div className="bg-blue-50 dark:bg-slate-700 p-3 border-b border-blue-100 dark:border-slate-600 flex justify-between items-center">
         <h3 className="font-bold text-blue-900 dark:text-blue-200 text-sm flex items-center">
-           <Edit2 size={14} className="mr-2" /> Draft Lead
+          <Edit2 size={14} className="mr-2" /> Draft Lead
         </h3>
         <button onClick={() => setEditing(!editing)} className="text-xs text-blue-600 dark:text-blue-300 underline">
           {editing ? 'Done' : 'Edit'}
         </button>
       </div>
-      
+
       <div className="p-4 space-y-3 text-sm">
         {/* Name */}
         <div>
           <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Customer</label>
           {editing ? (
-             <input className="w-full bg-gray-50 dark:bg-slate-900 border dark:border-slate-600 rounded p-1.5 mt-1 text-gray-900 dark:text-white" value={data.customerName} onChange={e => setData({...data, customerName: e.target.value})} />
+            <input className="w-full bg-gray-50 dark:bg-slate-900 border dark:border-slate-600 rounded p-1.5 mt-1 text-gray-900 dark:text-white" value={data.customerName} onChange={e => setData({ ...data, customerName: e.target.value })} />
           ) : (
-             <p className="font-medium text-gray-900 dark:text-white">{data.customerName}</p>
+            <p className="font-medium text-gray-900 dark:text-white">{data.customerName}</p>
           )}
         </div>
 
@@ -416,41 +415,41 @@ const LeadDraftWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: 
         <div>
           <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Address / Location</label>
           {editing ? (
-             <div className="flex mt-1">
-                 <input 
-                    className="flex-1 bg-gray-50 dark:bg-slate-900 border dark:border-slate-600 rounded-l p-1.5 text-gray-900 dark:text-white text-xs" 
-                    value={data.addressLabel} 
-                    onChange={e => setData({...data, addressLabel: e.target.value})} 
-                 />
-                 <button onClick={handleReSearch} className="bg-blue-600 text-white px-2 rounded-r flex items-center justify-center">
-                    <Search size={12} />
-                 </button>
-             </div>
+            <div className="flex mt-1">
+              <input
+                className="flex-1 bg-gray-50 dark:bg-slate-900 border dark:border-slate-600 rounded-l p-1.5 text-gray-900 dark:text-white text-xs"
+                value={data.addressLabel}
+                onChange={e => setData({ ...data, addressLabel: e.target.value })}
+              />
+              <button onClick={handleReSearch} className="bg-blue-600 text-white px-2 rounded-r flex items-center justify-center">
+                <Search size={12} />
+              </button>
+            </div>
           ) : (
-             <p className="text-gray-700 dark:text-gray-300">{data.addressLabel}</p>
+            <p className="text-gray-700 dark:text-gray-300">{data.addressLabel}</p>
           )}
 
           {/* Map Preview */}
           <div className="mt-2 h-32 w-full bg-gray-100 dark:bg-slate-900 rounded-lg overflow-hidden relative border border-gray-200 dark:border-slate-700">
-             {loadingMap && (
-                 <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-black/50 z-10">
-                     <Loader2 className="animate-spin text-blue-600" size={20} />
-                 </div>
-             )}
-             {geoLoc ? (
-                 <iframe
-                   width="100%"
-                   height="100%"
-                   frameBorder="0"
-                   scrolling="no"
-                   marginHeight={0}
-                   marginWidth={0}
-                   src={`https://maps.google.com/maps?q=${geoLoc.lat},${geoLoc.lng}&z=14&output=embed`}
-                   className="opacity-90"
-                 />
-             ) : (
-                 <div className="flex items-center justify-center h-full text-xs text-gray-400">Map unavailable</div>
-             )}
+            {loadingMap && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-black/50 z-10">
+                <Loader2 className="animate-spin text-blue-600" size={20} />
+              </div>
+            )}
+            {geoLoc ? (
+              <iframe
+                width="100%"
+                height="100%"
+                frameBorder="0"
+                scrolling="no"
+                marginHeight={0}
+                marginWidth={0}
+                src={`https://maps.google.com/maps?q=${geoLoc.lat},${geoLoc.lng}&z=14&output=embed`}
+                className="opacity-90"
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-xs text-gray-400">Map unavailable</div>
+            )}
           </div>
         </div>
       </div>
@@ -458,7 +457,7 @@ const LeadDraftWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: 
       <div className="bg-gray-50 dark:bg-slate-700 p-3 flex space-x-2">
         <button onClick={onCancel} className="flex-1 py-2 text-gray-600 dark:text-gray-300 bg-white dark:bg-slate-800 border dark:border-slate-600 rounded-lg text-xs font-medium">Cancel</button>
         {/* Pass geoLoc up if available so we don't re-geocode on confirm */}
-        <button onClick={() => onConfirm({...data, location: geoLoc})} className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex justify-center items-center shadow-lg shadow-blue-600/30">
+        <button onClick={() => onConfirm({ ...data, location: geoLoc })} className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex justify-center items-center shadow-lg shadow-blue-600/30">
           <Check size={14} className="mr-1" /> Create Lead
         </button>
       </div>
@@ -467,28 +466,28 @@ const LeadDraftWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: 
 };
 
 const LeadUpdateWidget = ({ args, onConfirm, onCancel }: { args: any, onConfirm: (d: any) => void, onCancel: () => void }) => {
-    const [data, setData] = useState(args);
-    return (
-      <div className="bg-white dark:bg-slate-800 border border-orange-200 dark:border-orange-800 rounded-xl shadow-md overflow-hidden animate-in fade-in zoom-in duration-300">
-        <div className="bg-orange-50 dark:bg-orange-900/30 p-3 border-b border-orange-100 dark:border-orange-800">
-          <h3 className="font-bold text-orange-900 dark:text-orange-200 text-sm flex items-center">
-             <RefreshCw size={14} className="mr-2" /> Update Lead
-          </h3>
-        </div>
-        <div className="p-4 space-y-3 text-sm">
-           {data.customerName && <div className="text-gray-700 dark:text-gray-300"><span className="font-bold">Name:</span> {data.customerName}</div>}
-           {data.whatsappNumber && <div className="text-gray-700 dark:text-gray-300"><span className="font-bold">WhatsApp:</span> {data.whatsappNumber}</div>}
-           {data.addressLabel && <div className="text-gray-700 dark:text-gray-300"><span className="font-bold">Address:</span> {data.addressLabel}</div>}
-           {data.noteToAdd && <div className="text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-slate-900 p-2 rounded italic">"{data.noteToAdd}"</div>}
-        </div>
-        <div className="bg-gray-50 dark:bg-slate-700 p-3 flex space-x-2">
-          <button onClick={onCancel} className="flex-1 py-2 text-gray-600 dark:text-gray-300 bg-white dark:bg-slate-800 border dark:border-slate-600 rounded-lg text-xs font-medium">Cancel</button>
-          <button onClick={() => onConfirm(data)} className="flex-1 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-600/30">
-            Confirm Update
-          </button>
-        </div>
+  const [data, setData] = useState(args);
+  return (
+    <div className="bg-white dark:bg-slate-800 border border-orange-200 dark:border-orange-800 rounded-xl shadow-md overflow-hidden animate-in fade-in zoom-in duration-300">
+      <div className="bg-orange-50 dark:bg-orange-900/30 p-3 border-b border-orange-100 dark:border-orange-800">
+        <h3 className="font-bold text-orange-900 dark:text-orange-200 text-sm flex items-center">
+          <RefreshCw size={14} className="mr-2" /> Update Lead
+        </h3>
       </div>
-    );
+      <div className="p-4 space-y-3 text-sm">
+        {data.customerName && <div className="text-gray-700 dark:text-gray-300"><span className="font-bold">Name:</span> {data.customerName}</div>}
+        {data.whatsappNumber && <div className="text-gray-700 dark:text-gray-300"><span className="font-bold">WhatsApp:</span> {data.whatsappNumber}</div>}
+        {data.addressLabel && <div className="text-gray-700 dark:text-gray-300"><span className="font-bold">Address:</span> {data.addressLabel}</div>}
+        {data.noteToAdd && <div className="text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-slate-900 p-2 rounded italic">"{data.noteToAdd}"</div>}
+      </div>
+      <div className="bg-gray-50 dark:bg-slate-700 p-3 flex space-x-2">
+        <button onClick={onCancel} className="flex-1 py-2 text-gray-600 dark:text-gray-300 bg-white dark:bg-slate-800 border dark:border-slate-600 rounded-lg text-xs font-medium">Cancel</button>
+        <button onClick={() => onConfirm(data)} className="flex-1 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-600/30">
+          Confirm Update
+        </button>
+      </div>
+    </div>
+  );
 };
 
 const InvoiceDraftWidget = ({ args, leads, onConfirm, onCancel }: { args: any, leads: Lead[], onConfirm: (d: any) => void, onCancel: () => void }) => {
@@ -501,7 +500,7 @@ const InvoiceDraftWidget = ({ args, leads, onConfirm, onCancel }: { args: any, l
     <div className="bg-white dark:bg-slate-800 border border-green-200 dark:border-green-800 rounded-xl shadow-md overflow-hidden mt-2">
       <div className="bg-green-50 dark:bg-green-900/30 p-3 border-b border-green-100 dark:border-green-800">
         <h3 className="font-bold text-green-900 dark:text-green-300 text-sm flex items-center">
-           <DollarSign size={14} className="mr-2" /> Invoice Draft
+          <DollarSign size={14} className="mr-2" /> Invoice Draft
         </h3>
       </div>
       <div className="p-4">
@@ -512,10 +511,10 @@ const InvoiceDraftWidget = ({ args, leads, onConfirm, onCancel }: { args: any, l
           </div>
           <p className="text-xl font-bold text-green-600 dark:text-green-400">LKR {args.amount}</p>
         </div>
-        
-        <a 
-          href={whatsappLink} 
-          target="_blank" 
+
+        <a
+          href={whatsappLink}
+          target="_blank"
           rel="noreferrer"
           className="w-full flex items-center justify-center p-2 mb-3 bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-200 rounded-lg text-xs font-bold"
         >
@@ -523,10 +522,10 @@ const InvoiceDraftWidget = ({ args, leads, onConfirm, onCancel }: { args: any, l
         </a>
 
         <div className="flex space-x-2">
-           <button onClick={onCancel} className="flex-1 py-2 border dark:border-slate-600 dark:text-gray-300 rounded-lg text-xs">Cancel</button>
-           <button onClick={() => onConfirm(args)} className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold shadow-lg shadow-green-600/30">
-             Confirm & Save
-           </button>
+          <button onClick={onCancel} className="flex-1 py-2 border dark:border-slate-600 dark:text-gray-300 rounded-lg text-xs">Cancel</button>
+          <button onClick={() => onConfirm(args)} className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold shadow-lg shadow-green-600/30">
+            Confirm & Save
+          </button>
         </div>
       </div>
     </div>
@@ -545,30 +544,30 @@ const GenerateDesignWidget = ({ args, leads, onConfirm, onCancel }: { args: any,
     const url = await generateDesignRender("ignored", args.prompt, false); // false = not sketch based
     if (url) {
       setGeneratedUrl(url);
-      
+
       // Auto-save to lead images & designs
       const base64 = url.split(',')[1];
       const lead = leads.find(l => l.id === selectedLeadId);
       if (lead) {
-         try {
-             // Upload to storage
-             const refPath = `leads/${lead.id}/ai_generated/${Date.now()}.png`;
-             const storageUrl = await store.uploadBase64(url, refPath);
-             
-             // Update lead images
-             store.updateLead(lead.id, { 
-                initialImages: [...(lead.initialImages || []), storageUrl],
-                generatedDesigns: [...(lead.generatedDesigns || []), {
-                   id: Date.now().toString(),
-                   sketchUrl: '',
-                   renderedUrl: storageUrl,
-                   prompt: args.prompt,
-                   createdAt: new Date().toISOString()
-                }]
-             });
-         } catch (e) {
-             console.error("Failed to save to storage", e);
-         }
+        try {
+          // Upload to storage
+          const refPath = `leads/${lead.id}/ai_generated/${Date.now()}.png`;
+          const storageUrl = await store.uploadBase64(url, refPath);
+
+          // Update lead images
+          store.updateLead(lead.id, {
+            initialImages: [...(lead.initialImages || []), storageUrl],
+            generatedDesigns: [...(lead.generatedDesigns || []), {
+              id: Date.now().toString(),
+              sketchUrl: '',
+              renderedUrl: storageUrl,
+              prompt: args.prompt,
+              createdAt: new Date().toISOString()
+            }]
+          });
+        } catch (e) {
+          console.error("Failed to save to storage", e);
+        }
       }
     } else {
       alert("Generation failed. Try again.");
@@ -587,19 +586,19 @@ const GenerateDesignWidget = ({ args, leads, onConfirm, onCancel }: { args: any,
     <div className="bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-800 rounded-xl shadow-md overflow-hidden mt-2">
       <div className="bg-violet-50 dark:bg-violet-900/30 p-3 border-b border-violet-100 dark:border-violet-800">
         <h3 className="font-bold text-violet-900 dark:text-violet-300 text-sm flex items-center">
-           <Sparkles size={14} className="mr-2" /> AI Design Generator
+          <Sparkles size={14} className="mr-2" /> AI Design Generator
         </h3>
       </div>
-      
+
       <div className="p-4 space-y-3">
         {!generatedUrl ? (
           <>
             <p className="text-xs text-gray-600 dark:text-gray-400"><strong>Prompt:</strong> {args.prompt}</p>
-            
+
             {!args.leadId && (
               <div>
                 <label className="text-[10px] uppercase font-bold text-gray-500">Select Customer</label>
-                <select 
+                <select
                   className="w-full mt-1 p-2 border rounded text-sm dark:bg-slate-900 dark:border-slate-600 dark:text-white"
                   value={selectedLeadId}
                   onChange={e => setSelectedLeadId(e.target.value)}
@@ -609,26 +608,26 @@ const GenerateDesignWidget = ({ args, leads, onConfirm, onCancel }: { args: any,
                 </select>
               </div>
             )}
-            
-            <button 
+
+            <button
               onClick={handleGenerate}
               disabled={generating || !selectedLeadId}
               className="w-full py-2 bg-violet-600 text-white rounded-lg text-xs font-bold flex items-center justify-center disabled:opacity-50"
             >
-              {generating ? <Loader2 className="animate-spin mr-2" size={14}/> : <ImageIcon className="mr-2" size={14}/>}
+              {generating ? <Loader2 className="animate-spin mr-2" size={14} /> : <ImageIcon className="mr-2" size={14} />}
               Generate & Save
             </button>
           </>
         ) : (
           <div className="animate-in fade-in zoom-in">
-             <img src={generatedUrl} className="w-full rounded-lg shadow-sm mb-3 border dark:border-slate-700" />
-             <div className="flex space-x-2">
-               <button onClick={onCancel} className="flex-1 py-2 border dark:border-slate-600 rounded-lg text-xs dark:text-gray-300">Close</button>
-               <button onClick={() => onConfirm({...args, leadId: selectedLeadId})} className="flex-1 py-2 bg-green-600 text-white rounded-lg text-xs font-bold flex items-center justify-center">
-                 <Check size={14} className="mr-1"/> Done
-               </button>
-             </div>
-             <p className="text-[10px] text-gray-400 text-center mt-2">Image saved to customer gallery.</p>
+            <img src={generatedUrl} className="w-full rounded-lg shadow-sm mb-3 border dark:border-slate-700" />
+            <div className="flex space-x-2">
+              <button onClick={onCancel} className="flex-1 py-2 border dark:border-slate-600 rounded-lg text-xs dark:text-gray-300">Close</button>
+              <button onClick={() => onConfirm({ ...args, leadId: selectedLeadId })} className="flex-1 py-2 bg-green-600 text-white rounded-lg text-xs font-bold flex items-center justify-center">
+                <Check size={14} className="mr-1" /> Done
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-400 text-center mt-2">Image saved to customer gallery.</p>
           </div>
         )}
       </div>

@@ -11,6 +11,14 @@ const COLLECTION_NAME = 'leads';
 class StoreService {
   private leads: Lead[] = [];
   private listeners: ((leads: Lead[]) => void)[] = [];
+  private chatListeners: ((history: any[]) => void)[] = [];
+  private chatHistory: any[] = [
+    {
+      id: 'welcome',
+      role: 'model',
+      text: "Ayubowan! I'm the Shop Manager. Upload site photos or tell me about new leads in Colombo.",
+    }
+  ];
   private unsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -41,6 +49,15 @@ class StoreService {
     return this.leads.find(l => l.id === id);
   }
 
+  getChatHistory(): any[] {
+    return [...this.chatHistory];
+  }
+
+  setChatHistory(history: any[]) {
+    this.chatHistory = history;
+    this.notifyChat();
+  }
+
   subscribe(listener: (leads: Lead[]) => void): () => void {
     this.listeners.push(listener);
     listener(this.leads);
@@ -49,8 +66,20 @@ class StoreService {
     };
   }
 
+  subscribeChat(listener: (history: any[]) => void): () => void {
+    this.chatListeners.push(listener);
+    listener(this.chatHistory);
+    return () => {
+      this.chatListeners = this.chatListeners.filter(l => l !== listener);
+    };
+  }
+
   notify() {
     this.listeners.forEach(l => l([...this.leads]));
+  }
+
+  notifyChat() {
+    this.chatListeners.forEach(l => l([...this.chatHistory]));
   }
 
   async addLead(lead: Lead) {
